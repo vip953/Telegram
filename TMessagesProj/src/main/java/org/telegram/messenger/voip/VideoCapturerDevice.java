@@ -3,17 +3,20 @@ package org.telegram.messenger.voip;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.graphics.Point;
 import android.media.projection.MediaProjection;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.view.Display;
+import android.widget.Toast;
 import android.view.WindowManager;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.NotificationCenter;
 import org.webrtc.Camera1Enumerator;
 import org.webrtc.Camera2Enumerator;
 import org.webrtc.CameraEnumerator;
@@ -174,6 +177,31 @@ public class VideoCapturerDevice {
                     });
                 }
             } else {
+                VoipFakeCameraManager fakeCameraManager = VoipFakeCameraManager.getInstance();
+                if (videoCapturer == null && fakeCameraManager.isEnabled()) {
+                    Uri selectedUri = fakeCameraManager.getSelectedUri();
+                    if (selectedUri != null) {
+                        videoCapturer = LocalVideoFileCapturer.create(ApplicationLoader.applicationContext, selectedUri, reason -> AndroidUtilities.runOnUIThread(() -> {
+                            fakeCameraManager.setEnabled(false);
+                            NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.onActivityResultReceived, VoipFakeCameraManager.REQUEST_CODE_PICK_VIDEO, -1, null);
+                            Toast.makeText(ApplicationLoader.applicationContext, reason, Toast.LENGTH_SHORT).show();
+                        }));
+                        if (videoCapturer != null) {
+                            videoCapturerSurfaceTextureHelper = SurfaceTextureHelper.create("VideoCapturerThread", eglBase.getEglBaseContext());
+                            handler.post(() -> {
+                                if (videoCapturerSurfaceTextureHelper == null) {
+                                    return;
+                                }
+                                nativeCapturerObserver = nativeGetJavaVideoCapturerObserver(nativePtr);
+                                videoCapturer.initialize(videoCapturerSurfaceTextureHelper, ApplicationLoader.applicationContext, nativeCapturerObserver);
+                                FileLog.d("VideoCapturerDevice init(" + ptr + "): videoCapturer.startCapture FAKE_VIDEO");
+                                videoCapturer.startCapture(CAPTURE_WIDTH, CAPTURE_HEIGHT, CAPTURE_FPS);
+                            });
+                            return;
+                        }
+                    }
+                }
+
                 CameraEnumerator enumerator = Camera2Enumerator.isSupported(ApplicationLoader.applicationContext) ? new Camera2Enumerator(ApplicationLoader.applicationContext) : new Camera1Enumerator();
                 int index = -1;
                 String[] names = enumerator.getDeviceNames();
@@ -235,6 +263,9 @@ public class VideoCapturerDevice {
                         videoCapturer.startCapture(CAPTURE_WIDTH, CAPTURE_HEIGHT, CAPTURE_FPS);
                     });
                 } else {
+                    if (!(videoCapturer instanceof CameraVideoCapturer)) {
+                        return;
+                    }
                     FileLog.d("VideoCapturerDevice init(" + ptr + "): videoCapturer.switchCamera CAMERA");
                     handler.post(() -> ((CameraVideoCapturer) videoCapturer).switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
                         @Override

@@ -8,6 +8,7 @@ import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Camera;
@@ -29,6 +30,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.core.graphics.ColorUtils;
@@ -36,9 +38,11 @@ import androidx.core.graphics.ColorUtils;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.messenger.Utilities;
 import org.telegram.messenger.voip.VideoCapturerDevice;
+import org.telegram.messenger.voip.VoipFakeCameraManager;
 import org.telegram.messenger.voip.VoIPService;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.BackDrawable;
@@ -54,12 +58,14 @@ import java.io.File;
 import java.io.FileOutputStream;
 
 @TargetApi(21)
-public abstract class PrivateVideoPreviewDialogNew extends FrameLayout implements VoIPService.StateListener {
+public abstract class PrivateVideoPreviewDialogNew extends FrameLayout implements VoIPService.StateListener, NotificationCenter.NotificationCenterDelegate {
 
     private boolean isDismissed;
 
     private FrameLayout viewPager;
     private TextView positiveButton;
+    private TextView fakeCameraButton;
+    private TextView fakeCameraStatus;
     private LinearLayout titlesLayout;
     private VoIpBitmapTextView[] titles;
     private VoIPTextureView textureView;
@@ -257,6 +263,22 @@ public abstract class PrivateVideoPreviewDialogNew extends FrameLayout implement
         });
 
         addView(positiveButton, LayoutHelper.createFrame(52, 52, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 80));
+
+        fakeCameraButton = new TextView(context);
+        fakeCameraButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        fakeCameraButton.setTextColor(Color.WHITE);
+        fakeCameraButton.setTypeface(AndroidUtilities.bold());
+        fakeCameraButton.setGravity(Gravity.CENTER);
+        fakeCameraButton.setOnClickListener(v -> onFakeCameraClicked());
+        addView(fakeCameraButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 145));
+
+        fakeCameraStatus = new TextView(context);
+        fakeCameraStatus.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+        fakeCameraStatus.setTextColor(0xCCFFFFFF);
+        fakeCameraStatus.setGravity(Gravity.CENTER);
+        addView(fakeCameraStatus, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 123));
+        updateFakeCameraUi();
+        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.onActivityResultReceived);
 
         titlesLayout = new LinearLayout(context) {
 
@@ -708,6 +730,7 @@ public abstract class PrivateVideoPreviewDialogNew extends FrameLayout implement
         super.onDetachedFromWindow();
         VoIPService service = VoIPService.getSharedInstance();
         if (service != null) service.unregisterStateListener(this);
+        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.onActivityResultReceived);
     }
 
     private void saveLastCameraBitmap() {
@@ -796,4 +819,64 @@ public abstract class PrivateVideoPreviewDialogNew extends FrameLayout implement
             textureView.renderer.setMirror(VoIPService.getSharedInstance().isFrontFaceCamera());
         }
     }
+
+    private void onFakeCameraClicked() {
+        VoipFakeCameraManager manager = VoipFakeCameraManager.getInstance();
+        if (manager.isEnabled()) {
+            manager.setEnabled(false);
+            updateFakeCameraUi();
+            Toast.makeText(getContext(), "Real camera active", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (manager.getSelectedUri() == null || !manager.hasReadableVideo()) {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("video/*");
+            ((Activity) getContext()).startActivityForResult(intent, VoipFakeCameraManager.REQUEST_CODE_PICK_VIDEO);
+        } else {
+            manager.setEnabled(true);
+            updateFakeCameraUi();
+        }
+    }
+
+    private void updateFakeCameraUi() {
+        VoipFakeCameraManager manager = VoipFakeCameraManager.getInstance();
+        if (fakeCameraButton == null || fakeCameraStatus == null) {
+            return;
+        }
+        if (manager.isEnabled()) {
+            fakeCameraButton.setText("Use Real Camera");
+            String name = manager.getSelectedName();
+            if (name == null) {
+                name = "Selected video";
+            }
+            fakeCameraStatus.setText(name + " • Fake camera active");
+        } else {
+            fakeCameraButton.setText("Use Video");
+            String name = manager.getSelectedName();
+            if (name != null) {
+                fakeCameraStatus.setText(name + " • Fake camera off");
+            } else {
+                fakeCameraStatus.setText("No video selected");
+            }
+        }
+    }
+
+    @Override
+    public void didReceivedNotification(int id, int account, Object... args) {
+        if (id == NotificationCenter.onActivityResultReceived && args != null && args.length >= 3) {
+            if (args[0] instanceof Integer && (Integer) args[0] == VoipFakeCameraManager.REQUEST_CODE_PICK_VIDEO) {
+                VoipFakeCameraManager manager = VoipFakeCameraManager.getInstance();
+                if (manager.getSelectedUri() != null && manager.hasReadableVideo()) {
+                    manager.setEnabled(true);
+                    Toast.makeText(getContext(), "Fake camera active", Toast.LENGTH_SHORT).show();
+                } else {
+                    manager.setEnabled(false);
+                    Toast.makeText(getContext(), "No readable video selected", Toast.LENGTH_SHORT).show();
+                }
+                updateFakeCameraUi();
+            }
+        }
+    }
+
 }
