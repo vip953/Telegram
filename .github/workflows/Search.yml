@@ -1,0 +1,15 @@
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build APK
+        run: ./gradlew :TMessagesProj:assembleDebug
+
+      - name: Find APK
+        run: |
+          echo "Searching APK..."
+          find . -name "*.apk"k"
