@@ -1,0 +1,2 @@
+- name: Find APK
+  run: find . -name "*.apk"
